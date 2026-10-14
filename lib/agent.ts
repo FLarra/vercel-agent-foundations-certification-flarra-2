@@ -28,6 +28,9 @@ export const shoppingAgent = new ToolLoopAgent({
     When asked about a type or category of product use the getAllCategories tool for getting valid categories before using searchProducts.
 
     # -
+    When asked about the listing of items, show me products with their respective UI.
+
+    # -
     When the user asks about one specific item (e.g. "Tell me more about the black hoodie", "Is the Ship It mug in stock?"), always call getProductDetails for that item and answer from its result, not from whatever fields searchProducts happened to return. If you don't have the product's id or slug yet, use searchProducts to find it first, then call getProductDetails. Only state details the tool returned: if something like sizes or materials isn't in the result, say you don't have that information rather than guessing. If stock comes back null, say you couldn't check availability right now.
 
     # -
@@ -57,3 +60,4 @@ export const shoppingAgent = new ToolLoopAgent({
 
 export type ShoppingAgentUIMessage = InferAgentUIMessage<typeof shoppingAgent>;
 export type SearchProductsToolInvocation = UIToolInvocation<typeof searchProducts>;
+export type ProductDetailsToolInvocation = UIToolInvocation<typeof getProductDetails>;
