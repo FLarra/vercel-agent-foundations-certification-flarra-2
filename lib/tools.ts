@@ -92,6 +92,12 @@ export const returnOrder = tool({
   },
 });
 
+// TODO: this output shape broke the shopper chat's product card. Since a930b28 it returns a flat
+// object with `price` in cents, but `components/agent-product-card.tsx` still destructures
+// `{ product, stock }` and renders `product.price` as a formatted string. Either restore the
+// `{ product: { ..., price: formatPrice(...) }, stock: { available, inStock, lowStock } | null }`
+// shape or update the card. Also restore `getProductStock(productId).catch(() => null)`: a stock
+// error now fails the whole lookup, while the shopper instructions still say "If stock comes back null".
 export const getProductDetails = tool({
   description: `Fetch the full details for a single product by its ID or slug, including every image, the full description, price, tags, and live stock levels. Use this when the user asks about a specific item (e.g. "tell me more about the black hoodie") — prefer it over searchProducts once you know which product they mean, since searchProducts only returns a summary.`,
   inputSchema: z.object({

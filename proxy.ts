@@ -21,5 +21,8 @@ export function proxy(request: NextRequest) {
 }
 
 export const config = {
+  // TODO: /api/admin/chat isn't matched, so anyone with the URL can query back-office data and run
+  // bash in the sandbox without logging in. Gate it too (return 401 for API paths instead of
+  // redirecting to /admin/login), or check the admin cookie inside the route handler.
   matcher: ["/admin/:path*"],
 };

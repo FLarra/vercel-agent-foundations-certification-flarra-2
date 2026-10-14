@@ -43,6 +43,8 @@ export async function adminChatFlow(messages: UIMessage[]) {
 
   const modelMessages = await convertToModelMessages(messages);
 
+  // TODO: verify this works. readMemories() calls the Sandbox API directly from the workflow body;
+  // I/O belongs in a step, so it probably needs a "use step" directive (as the tools have).
   const memories = await readMemories();
 
   const agent = new WorkflowAgent({
