@@ -5,7 +5,7 @@ A Next.js e-commerce app used as the hands-on project for the Vercel Agent Found
 The repo has two layers:
 
 1. **A working storefront** — products, search, product pages, cart, promotions, and categories, backed by the live Vercel Swag Store API. There is no local product or cart database; reads happen in Server Components and mutations go through Server Actions, so the deployment-protection secret never reaches the client.
-2. **A workshop track** — the agent and workflow pieces (`lib/agent.ts`, `lib/tools.ts`, `lib/workflows/*`, the `/api/chat*` and `/api/admin/chat` routes) started as stubs returning `501` and get filled in chapter by chapter. Chapters 1–4 are done (see [What we've learned](#-what-weve-learned-so-far)); the admin agent is still a stub.
+2. **A workshop track** — the agent and workflow pieces (`lib/agent.ts`, `lib/tools.ts`, `lib/sandbox.ts`, `lib/workflows/*`, the `/api/chat*` and `/api/admin/chat` routes) started as stubs returning `501` and were filled in chapter by chapter. Chapters 1–7 are done (see [What we've learned](#-what-weve-learned-so-far)): a customer-facing shopping agent and a back-office admin agent with a sandbox and persistent memory.
 
 ---
 
@@ -16,7 +16,7 @@ A visual recap of the certification chapters completed in this repo. Every chapt
 ### TL;DR
 
 > **Agent = Model + Instructions + Tools, running in a loop.**
-> **Tools** let it read real data. **Generative UI** turns tool calls into React components. **Workflows** make the whole thing survive crashes, retries, and page refreshes.
+> **Tools** let it read real data. **Generative UI** turns tool calls into React components. **Workflows** make the whole thing survive crashes, retries, and page refreshes. A **sandbox** lets it run code instead of doing math in its head, and **memory** carries what it learned into the next chat.
 
 ### The journey
 
@@ -26,7 +26,9 @@ flowchart LR
     C1 --> C2["🛠️ 2 · Tools<br/>tool() + zod"]
     C2 --> C3["🎨 3 · Generative UI<br/>tool parts → React"]
     C3 --> C4["⏱️ 4 · Workflows<br/>use workflow / use step"]
-    C4 -.-> C5["🔒 Next · Admin agent<br/>/api/admin/chat"]
+    C4 --> C5["🔒 5 · Admin agent<br/>back-office tools"]
+    C5 --> C6["📦 6 · Sandbox<br/>bash tool + Vercel Sandbox"]
+    C6 --> C7["🧠 7 · Persistent memory<br/>memories.md + scripts"]
 ```
 
 | # | Chapter | Commit(s) | Key files | Status |
@@ -35,7 +37,9 @@ flowchart LR
 | 2 | 🛠️ Tools | `a1c0d5c` | `lib/tools.ts` | ✅ |
 | 3 | 🎨 Generative UI | `54a52b0`, `2bfcafd` | `components/agent-product-list.tsx`, `components/agent-product-card.tsx` | ✅ |
 | 4 | ⏱️ Workflows | `03b0424` | `lib/workflows/chat-flow.ts`, `lib/workflows/return-flow.ts`, `app/api/chat/[id]/stream/route.ts` | ✅ |
-| 5 | 🔒 Admin agent | — | `app/api/admin/chat/route.ts`, `lib/workflows/admin-chat-flow.ts` | ⏳ stub |
+| 5 | 🔒 Admin agent | `a930b28` | `lib/workflows/admin-chat-flow.ts`, `app/api/admin/chat/route.ts`, `components/admin-agent-chat.tsx`, `lib/tools.ts` | ✅ |
+| 6 | 📦 Sandbox | `ff24f99` | `lib/sandbox.ts`, `lib/tools.ts` (`bash`), `components/admin-agent-chat.tsx`, `pnpm-workspace.yaml` | ✅ |
+| 7 | 🧠 Persistent memory | `0f25638` | `lib/workflows/admin-chat-flow.ts` | ✅ |
 
 ### 🧠 The mental model: what an agent actually is
 
@@ -86,11 +90,11 @@ export const POST = async (req: Request) => {
 };
 ```
 
-**Anatomy of a good system prompt** (from `lib/agent.ts`):
+**Anatomy of a good system prompt** (from `shoppingInstructions` in `lib/workflows/chat-flow.ts`):
 
 | Section | Job | Example |
 | --- | --- | --- |
-| 🪪 Identity | Who the agent is | *"You are Larry, a friendly store associate for Ship It Shop"* |
+| 🪪 Identity | Who the agent is | *"You are Larry, a friendly helpful assistant for Ship It Shop"* |
 | 🎯 Role | Goal and attitude | *"you never pressure anyone into buying"* |
 | 🔗 Tool rules | When and in what order to call tools | *"use the getAllCategories tool … before using searchProducts"* |
 | ⚓ Grounding | Don't invent facts | *"Only state details the tool returned"* |
@@ -273,13 +277,169 @@ sequenceDiagram
 | Refresh mid-answer | stream lost | resumes via `GET /api/chat/[id]/stream` |
 | Client transport | default | `WorkflowChatTransport` + `resume` |
 
-> ℹ️ `shoppingAgent` in `lib/agent.ts` is still exported because its inferred types (`ShoppingAgentUIMessage`, `*ToolInvocation`) drive the UI. The live chat now runs `chatFlow`'s own `WorkflowAgent`, which has its own, shorter instructions.
+> ℹ️ `shoppingAgent` in `lib/agent.ts` is never run, but it's still exported because its inferred types (`ShoppingAgentUIMessage`, `*ToolInvocation`) drive the UI. The live chat runs `chatFlow`'s `WorkflowAgent`. Both agents share one prompt, `shoppingInstructions`, exported from `lib/workflows/chat-flow.ts`.
 
 **Takeaways**
 - 🧭 Orchestration goes in the **workflow**, I/O goes in **steps**.
 - 🚀 `start(fn, args)` launches a run and returns a `runId`. `getRun(id)` re-attaches to it later.
 - 🔌 Workflows stream out through `getWritable()`. Consumers read `run.readable` / `run.getReadable({ startIndex })`.
 - 🎁 Chapter 2's tools became durable by adding one line each: `"use step"`.
+
+---
+
+### 🔒 Chapter 5 — Admin agent (back office)
+
+**Idea:** a second agent, for store staff instead of shoppers. The plumbing is chapter 4's, copied; what changes is the **instructions + tools** pair.
+
+```mermaid
+flowchart LR
+    subgraph Shop["🛍️ Shopper side"]
+        direction LR
+        AC["AgentChat"] --> P1["POST /api/chat"] --> CF["chatFlow<br/>Larry, store associate"]
+    end
+    subgraph Admin["🔒 Back office · /admin"]
+        direction LR
+        AAC["AdminAgentChat"] --> P2["POST /api/admin/chat"] --> AF["adminChatFlow<br/>back-office assistant"]
+    end
+```
+
+```ts
+// app/api/admin/chat/route.ts — same shape as the chapter 4 chat route
+export async function POST(req: Request) {
+  const { messages }: { messages: UIMessage[] } = await req.json();
+  const run = await start(adminChatFlow, [messages]);
+  return createUIMessageStreamResponse({
+    stream: run.readable.pipeThrough(createModelCallToUIChunkTransform()),
+    headers: { "x-workflow-run-id": run.runId },
+  });
+}
+
+// components/admin-agent-chat.tsx — a different agent needs a different route
+useChat({ transport: new WorkflowChatTransport({ api: "/api/admin/chat" }) });
+```
+
+**New read-only tools** (all `"use step"`, all hitting `/back-office/*` through `lib/api.ts`). The admin agent also reuses `searchProducts` and `getAllCategories`.
+
+| Tool | Input (all optional) | Calls (`lib/api.ts`) | Returns |
+| --- | --- | --- | --- |
+| `getSupportTickets` | `from`, `to`, `status`, `priority`, `category`, `assignee`, `limit` ≤ 500 | `getBackOfficeSupportTickets` | `{ count, tickets[], range }` |
+| `getReturnsHistory` | `from`, `to`, `status`, `decision`, `limit` ≤ 500 | `getBackOfficeReturns` | `{ count, returns[], range }` |
+| `getInventoryStock` | `productIds`, `lowStock`, `inStock`, `page`, `limit` ≤ 200 | `getBackOfficeStock` | `{ count, stock[], pagination }` (lowest stock first) |
+| `getSalesAnalytics` | `from`, `to`, `productId` | `getBackOfficeSales` | `{ count, sales[], summary }` (most units first) |
+
+**Takeaways**
+- 🔁 **A new agent is mostly new instructions + tools.** Route, transport, and workflow are reused as-is.
+- 📅 **Plan for vague input.** Date ranges default to the last 30 days, and the `.describe()` tells the model to pick a range for *"this month"*, **say which one it used**, and carry on instead of asking.
+- 💵 **Spell out units.** Amounts come back in cents. Both the tool descriptions and the instructions say to divide by 100 before replying.
+- 🧯 **Errors keep the success shape.** Failures return `{ count: 0, tickets: [], error }`, so the model always sees the same keys.
+- 👀 **Read-only on purpose.** *"Never promise to change anything in the store, you have read-only tools."*
+- 🪝 The tool descriptions already warn that *"exact joins and aggregates are limited until a sandbox tool is added"*. That's chapter 6.
+
+> ℹ️ The admin chat has no `/[id]/stream` resume route, so unlike the shopper chat, a refresh mid-answer drops the stream.
+
+---
+
+### 📦 Chapter 6 — Sandbox (let the agent run code)
+
+**Problem:** models are bad at arithmetic over many rows. *"Return rate per product last month"* means joining hundreds of sales rows with returns rows. Done in the context window, that gives confident, wrong numbers.
+
+**Idea:** fetch the data with tools, then compute it with code. A `bash` tool runs commands in a **Vercel Sandbox** (an isolated microVM), so the model can write the JSON to a file and run Python over it.
+
+```mermaid
+sequenceDiagram
+    participant A as adminChatFlow<br/>WorkflowAgent
+    participant D as data tools
+    participant B as bash tool<br/>use step
+    participant SB as Vercel Sandbox<br/>admin-agent-sandbox
+    A->>D: getSalesAnalytics + getReturnsHistory
+    D-->>A: JSON rows
+    A->>B: cat > /tmp/sales.json <<EOF … EOF
+    B->>SB: runCommand("bash", ["-lc", command])
+    A->>B: python3 (join + aggregate, stdlib only)
+    B->>SB: runCommand("bash", ["-lc", command])
+    SB-->>B: stdout · stderr · exitCode
+    B-->>A: exact numbers
+```
+
+```ts
+// lib/sandbox.ts — one named sandbox, reused across requests
+export const createOrGetSandbox = async (name: string) => {
+  try {
+    return await Sandbox.get({ name });
+  } catch {
+    return await Sandbox.create({
+      name,
+      // persistent: true is the beta default; auto-snapshots on stop, auto-resumes on next get
+      snapshotExpiration: 7 * 24 * 60 * 60 * 1000, // 7 days
+      timeout: 2700000, // 45 minutes
+    });
+  }
+};
+
+// lib/tools.ts
+export const bash = tool({
+  description: "Run a bash command in the sandbox environment",
+  inputSchema: z.object({ command: z.string().describe("The bash command to run") }),
+  execute: async ({ command }) => {
+    "use step";
+    const sandbox = await createOrGetSandbox(SANDBOX_NAME);
+    const result = await sandbox.runCommand("bash", ["-lc", command]);
+    return { stdout: await result.stdout(), stderr: await result.stderr(), exitCode: result.exitCode };
+  },
+});
+```
+
+The instruction that tells the model when to use it: *"For multi-step inference (return rates, day-over-day trends, spike detection, joins between sales and returns), prefer the bash tool: write fetched JSON to /tmp with a heredoc, then run python3 (stdlib only, no pandas) to compute. Don't eyeball aggregates over more than ~10 rows."*
+
+**Generative UI, again:** `tool-bash` parts render in `admin-agent-chat.tsx` as a terminal block: `$ command`, then stdout, with stderr in red. While the step is still running it shows *Running…* and a blinking cursor.
+
+**pnpm `allowBuilds`:** the same commit adds `@vercel/sandbox` and fills in the `allowBuilds` placeholders in `pnpm-workspace.yaml` (`esbuild`, `@swc/core`, `cbor-extract` → `true`). pnpm only runs dependency build scripts that are explicitly allowed.
+
+**Takeaways**
+- 🧮 **Don't let the model do math in its head.** Tools fetch, code computes.
+- 🔒 **Arbitrary shell, but not on your server.** The model can run anything, but only inside the sandbox.
+- ♻️ **One named, persistent sandbox.** `Sandbox.get` first, `Sandbox.create` on a miss. Files written there outlive the chat, which chapter 7 builds on.
+- 🎨 Every new tool is also a new part type to render.
+
+---
+
+### 🧠 Chapter 7 — Persistent memory
+
+**Idea:** the sandbox's filesystem outlives a conversation, so use it as the agent's long-term memory: a `memories.md` the agent appends to with `bash`, read back into the system prompt at the start of every run.
+
+```mermaid
+flowchart LR
+    subgraph Run["⏱️ adminChatFlow · every request"]
+        direction TB
+        R["readMemories()<br/>sandbox.readFileToBuffer('memories.md')"] --> I["instructions =<br/>backOfficeInstructions<br/>+ memory protocol<br/>+ current memories"]
+        I --> AG["WorkflowAgent"]
+    end
+    AG -- "bash: append a one-liner" --> MEM[("📝 /vercel/sandbox/memories.md")]
+    AG -- "bash: write a report script" --> SCR[("🐍 /vercel/sandbox/scripts/*.py")]
+    MEM -. "next request" .-> R
+```
+
+**What's worth remembering**, per the memory protocol in the instructions:
+
+| ✅ Save | ❌ Don't save |
+| --- | --- |
+| Presentation preferences (percentages vs raw counts, terse vs detailed, currency format) | Routine questions |
+| Business context the data can't show (seasonal products, what "normal" looks like, who cares about what) | One-off lookups |
+| The user's explanations for past anomalies, so they aren't flagged again | Anything the data tools can re-derive |
+| Corrections and feedback on earlier answers | |
+
+**Priority order for every request:**
+1. Check the memories and any scripts under `## Scripts for common tasks`. If a saved script covers the request, run it with `bash`.
+2. Otherwise, do the work with the data tools and `bash`.
+3. After answering, decide whether the task should become a reusable script.
+
+**Memories turn into scripts.** For recurring questions (*top sellers last week*, *refund rate by category*), the agent writes `/vercel/sandbox/scripts/<name>.py` (stdlib only, always run with `python3`) and logs it in `memories.md` with a one-line description. Next time, step 1 finds it and runs it.
+
+**Takeaways**
+- 🧠 **Memory = a file + a read at startup + rules for when to write.** Nothing fancier is needed at this scale.
+- ✍️ **The write policy is the hard part.** Without the *don't save* list, the agent would log every question.
+- 🤫 *"Don't interview the user. Capture signal opportunistically as it comes up."*
+- 📈 **Memory compounds.** Answers become scripts, scripts get logged, logged scripts get reused.
 
 ---
 
@@ -291,18 +451,27 @@ flowchart TB
         BTN["Header · AgentButton"] --> SB["AgentSidebar"]
         SB --> AC["AgentChat<br/>useChat + WorkflowChatTransport"]
         AC --> GUI["AgentProductList · AgentProductCard"]
+        ADM["/admin · AdminAgentChat<br/>useChat + WorkflowChatTransport"] --> TERM["tool-bash → terminal block"]
     end
     subgraph Server["🖥️ Next.js on Vercel"]
         POST["POST /api/chat"] --> CF["chatFlow · use workflow<br/>WorkflowAgent"]
         GET["GET /api/chat/[id]/stream"] -.->|"getRun"| CF
-        CF --> TOOLS["tools · use step<br/>searchProducts · getProductDetails<br/>getAllCategories · returnOrder"]
+        CF --> TOOLS["shop tools · use step<br/>searchProducts · getProductDetails<br/>getAllCategories · returnOrder"]
         TOOLS -->|"start()"| RF["returnFlow · use workflow<br/>4 steps"]
+        APOST["POST /api/admin/chat"] --> AF["adminChatFlow · use workflow<br/>WorkflowAgent + memories"]
+        AF --> ATOOLS["back-office tools · use step<br/>getSupportTickets · getReturnsHistory<br/>getInventoryStock · getSalesAnalytics<br/>+ searchProducts · getAllCategories"]
+        AF --> BASH["bash · use step"]
     end
     AC -->|"send"| POST
     AC -->|"resume"| GET
+    ADM -->|"send"| APOST
     CF <-->|"anthropic/claude-sonnet-5"| GW[("Vercel AI Gateway")]
+    AF <-->|"anthropic/claude-sonnet-5"| GW
     TOOLS -->|"x-vercel-protection-bypass"| API[("Swag Store API")]
+    ATOOLS -->|"/back-office/*"| API
     RF --> API
+    BASH -->|"runCommand"| VSB[("Vercel Sandbox<br/>memories.md · scripts/")]
+    AF -.->|"readMemories()"| VSB
 ```
 
 ### 🧰 Cheat sheet: every API we've used
@@ -321,7 +490,11 @@ flowchart TB
 | `WorkflowAgent` | `@ai-sdk/workflow` | `lib/workflows/chat-flow.ts` | An agent that runs inside a workflow |
 | `createModelCallToUIChunkTransform` | `@ai-sdk/workflow` | chat routes | Converts workflow stream chunks into UI chunks |
 | `createUIMessageStreamResponse` | `ai` | chat routes | Wraps a UI stream as an HTTP response |
-| `WorkflowChatTransport` | `@ai-sdk/workflow/client` | `components/agent-chat.tsx` | Resumable client transport for `useChat` |
+| `WorkflowChatTransport` | `@ai-sdk/workflow/client` | `components/agent-chat.tsx`, `components/admin-agent-chat.tsx` | Resumable client transport for `useChat` (`api` picks the route) |
+| `convertToModelMessages` | `ai` | `lib/workflows/chat-flow.ts`, `admin-chat-flow.ts` | Turns UI messages into model messages for `WorkflowAgent` |
+| `Sandbox.get`, `Sandbox.create` | `@vercel/sandbox` | `lib/sandbox.ts` | Reuse a named, persistent sandbox, or create it |
+| `sandbox.runCommand` | `@vercel/sandbox` | `bash` tool | Run a command; read `stdout()`, `stderr()`, `exitCode` |
+| `sandbox.readFileToBuffer` | `@vercel/sandbox` | `readMemories()` | Read a file out of the sandbox |
 
 ### 🧪 Try it yourself
 
@@ -335,6 +508,15 @@ Run `pnpm dev`, open the agent from the header, and try:
 | *"I want to return order 11111, it doesn't fit"* | `returnOrder` → `returnFlow` starts in the background (look for `📧` in the server logs) |
 | Refresh the page mid-answer | The stream reconnects via `/api/chat/[id]/stream` |
 
+Then log in at `/admin/login` (the demo password is in `lib/admin-auth.ts`) and try the admin agent:
+
+| Prompt | What happens |
+| --- | --- |
+| *"Show me low-stock items"* | `getInventoryStock({ lowStock: true })` → short summary |
+| *"What's the return rate per product over the last 30 days?"* | `getSalesAnalytics` + `getReturnsHistory` → `bash` (JSON into `/tmp`, `python3` join) → 🖥️ terminal blocks |
+| *"Always show rates as percentages"*, then ask something in a new chat | A line is appended to `memories.md`, and the next run's instructions include it |
+| Ask for the same report twice, e.g. *"Top sellers last week"* | The first run may save `scripts/top_sellers_last_week.py`; the second runs it |
+
 📚 Workshop docs: [Chat agent](https://agent-foundations-certification.vercel.app/docs/chat-agent) · [Workflows](https://agent-foundations-certification.vercel.app/docs/workflows) · [Admin chat agent](https://agent-foundations-certification.vercel.app/docs/admin-chat-agent)
 
 ---
@@ -346,21 +528,23 @@ Run `pnpm dev`, open the agent from the header, and try:
 - **Tailwind CSS v4** + **shadcn/ui** (new-york style); `lucide-react` icons
 - **AI SDK 7** (`ai`, `@ai-sdk/react`) for the agent chapters
 - **Workflow DevKit** (`workflow`, `@ai-sdk/workflow`) for durable agents and background flows
-- **pnpm** (see `pnpm-lock.yaml`)
+- **Vercel Sandbox** (`@vercel/sandbox`) for the admin agent's `bash` tool and memory
+- **pnpm** (see `pnpm-lock.yaml`; dependency build scripts are approved under `allowBuilds` in `pnpm-workspace.yaml`)
 
 ## Getting started
 
-Prerequisites: Node.js 22+ and [pnpm](https://pnpm.io).
+Prerequisites: Node.js 22+, [pnpm](https://pnpm.io), and the [Vercel CLI](https://vercel.com/docs/cli) for the agent chapters.
 
 ```bash
 pnpm install
-cp .env.example .env.local   # then fill in BYPASS_SECRET
+vercel link && vercel env pull                    # agents only: writes .env.local with VERCEL_OIDC_TOKEN
+echo "BYPASS_SECRET=<your secret>" >> .env.local  # unless the pull already brought it down
 pnpm dev
 ```
 
 Open [http://localhost:3000](http://localhost:3000).
 
-The storefront only needs `BYPASS_SECRET` to run. The `STORE_BUSINESS_AGENT_*` variables are only required once you reach the admin-agent chapter.
+The storefront only needs `BYPASS_SECRET`. The agents also need a Vercel OIDC token, which authenticates calls to the AI Gateway and to Vercel Sandbox. Locally the pulled token expires after about 12 hours, so re-run `vercel env pull` when agent calls start failing with auth errors. Each pull rewrites `.env.local`, so keep `BYPASS_SECRET` in the Vercel project's Development env vars, or add it back after pulling.
 
 ## Environment variables
 
@@ -368,12 +552,10 @@ The storefront only needs `BYPASS_SECRET` to run. The `STORE_BUSINESS_AGENT_*` v
 | --- | --- | --- |
 | `BYPASS_SECRET` | Yes | Vercel deployment-protection bypass secret. Sent as the `x-vercel-protection-bypass` header on every API call. Server-only — never give it a `NEXT_PUBLIC_` prefix. |
 | `API_BASE_URL` | No | Override the backend API base URL. Defaults to `https://vercel-agentic-swag-store-api.vercel.app/api`. |
-| `STORE_BUSINESS_AGENT_URL` | Admin chat only | HTTP base URL of the deployed store-business-agent. |
-| `STORE_BUSINESS_AGENT_BASIC_USER` | Admin chat only | HTTP Basic auth user matching the agent's `ADMIN_AGENT_BASIC_USER`. |
-| `STORE_BUSINESS_AGENT_BASIC_PASSWORD` | Admin chat only | HTTP Basic auth password matching the agent's `ADMIN_AGENT_BASIC_PASSWORD`. |
+| `VERCEL_OIDC_TOKEN` | Agents only | Authenticates the AI Gateway and Vercel Sandbox. Get it locally with `vercel env pull`. Injected automatically on Vercel. |
 | `NEXT_PUBLIC_SITE_URL` | No | Public site URL used for metadata. Defaults to `http://localhost:3000`. |
 
-`.env.local` is gitignored; `.env.example` is the redacted template.
+`.env.local` is gitignored, and so is every other `.env*` file, so there is no committed template.
 
 ## Scripts
 
@@ -398,7 +580,7 @@ app/
   api/
     chat/route.ts          # customer chat — starts the chatFlow workflow
     chat/[id]/stream/      # resumes a chat workflow's stream by run id
-    admin/chat/route.ts    # admin agent chat — workshop stub (501)
+    admin/chat/route.ts    # admin agent chat — starts the adminChatFlow workflow
   layout.tsx               # synchronous root layout (keeps routes statically renderable)
 lib/
   api.ts                   # typed fetch wrapper for the Swag Store API (server-only)
@@ -409,8 +591,10 @@ lib/
   admin-auth.ts            # demo admin auth constants
   admin-actions.ts         # 'use server' admin login/logout
   agent.ts                 # shoppingAgent (ToolLoopAgent) + inferred UI types
-  tools.ts                 # searchProducts, getProductDetails, getAllCategories, returnOrder
-  workflows/               # chat-flow + return-flow (done), admin-chat-flow (stub)
+  tools.ts                 # shop tools, back-office tools (getSupportTickets, getReturnsHistory,
+                           #   getInventoryStock, getSalesAnalytics), and bash
+  sandbox.ts               # createOrGetSandbox() — named, persistent Vercel Sandbox
+  workflows/               # chat-flow, return-flow, admin-chat-flow (back-office agent + memory)
 components/
   cart-*.tsx               # cart provider, button, and sheet (client)
   agent-chat.tsx, admin-agent-chat.tsx, ai-elements/   # chat UI (workshop)
@@ -430,8 +614,8 @@ Render modes: `/` is **static** (`force-static`, `revalidate = 60`), `/products/
 
 ### Admin
 
-`/admin` is gated behind `/admin/login` with a simple demo cookie set by `lib/admin-actions.ts`. The dashboard hosts the admin agent chat UI, which posts to `/api/admin/chat`. That route is still a workshop stub (`501`) until you complete the admin-agent chapter.
+The `/admin` pages are gated behind `/admin/login` by `proxy.ts`, using a simple demo cookie set by `lib/admin-actions.ts`. The dashboard hosts `AdminAgentChat`, which posts to `/api/admin/chat`. That route starts `adminChatFlow`: a `WorkflowAgent` with read-only back-office tools, a `bash` tool backed by a persistent Vercel Sandbox, and a `memories.md` in that sandbox that's loaded into its instructions on every run (chapters 5–7).
 
 ## Deployment
 
-Deploys to [Vercel](https://vercel.com). In the project's environment variables set `BYPASS_SECRET` (and the `STORE_BUSINESS_AGENT_*` values if you've built the admin-agent chapter). `images.remotePatterns` in `next.config.mjs` is whitelisted for the Vercel Blob hosts the API serves product images from — add hostnames there if the API starts returning images from a new domain.
+Deploys to [Vercel](https://vercel.com). In the project's environment variables set `BYPASS_SECRET`. On Vercel the OIDC token for the AI Gateway and Vercel Sandbox is provided automatically. `images.remotePatterns` in `next.config.mjs` is whitelisted for the Vercel Blob hosts the API serves product images from — add hostnames there if the API starts returning images from a new domain.
