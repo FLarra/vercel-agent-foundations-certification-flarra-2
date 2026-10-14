@@ -1,5 +1,3 @@
-"use client";
-
 /**
  * Welcome! This is the chat panel you will edit for the workshop!
  *
@@ -10,6 +8,8 @@
  *
  * Workshop docs: https://agent-foundations-certification.vercel.app/docs/chat-agent
  */
+
+"use client";
 
 import { useChat } from "@ai-sdk/react";
 import { useState } from "react";
@@ -28,11 +28,13 @@ import {
   PromptInputTextarea,
   PromptInputTools,
 } from "@/components/ai-elements/prompt-input";
+import type { ShoppingAgentUIMessage } from "@/lib/agent";
+import { AgentProductList } from "./agent-product-list";
 
 export function AgentChat() {
   const [input, setInput] = useState("");
 
-  const { messages, error, sendMessage } = useChat();
+  const { messages, error, sendMessage } = useChat<ShoppingAgentUIMessage>();
 
   const handleSubmit = (message: PromptInputMessage) => {
     sendMessage({ text: input });
@@ -55,6 +57,10 @@ export function AgentChat() {
                         <MessageResponse>{p.text}</MessageResponse>
                       </MessageContent>
                     </Message>
+                  );
+                case "tool-searchProducts":
+                  return (
+                    <AgentProductList key={`${m.id}-${i}`} invocation={p} />
                   );
                 default:
                   return null;
