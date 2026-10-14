@@ -1,12 +1,11 @@
 /**
- * This is where the chat API route will live.
+ * Shopper chat. Starts a `chatFlow` run and streams it back; the run id goes out
+ * in `x-workflow-run-id` so the client can resume via `app/api/chat/[id]/stream`.
  *
- * During the workshop you'll wire this up to the agent in `lib/agent.ts`
- * using `createAgentUIStreamResponse` from the AI SDK. The chat panel in
- * `components/agent-chat.tsx` posts here once you swap its placeholder
- * `useState` for `useChat`.
+ * Chapters 1–3 streamed `shoppingAgent` here with `createAgentUIStreamResponse`
+ * (`git show a1c0d5c`).
  *
- * Workshop docs: https://agent-foundations-certification.vercel.app/docs/chat-agent
+ * Workshop docs: https://agent-foundations-certification.vercel.app/docs/workflows
  */
 
 import { chatFlow } from "@/lib/workflows/chat-flow";

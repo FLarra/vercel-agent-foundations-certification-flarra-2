@@ -1,7 +1,6 @@
 /**
- * This is where we'll add a route for resuming a stream for an agent chat.
- *
- * During the workshop you will wire this up in the Workflows chapter.
+ * Resumes a shopper chat's stream by workflow run id, skipping the UI chunks
+ * the client already has (`startIndex`).
  *
  * Workshop docs: https://agent-foundations-certification.vercel.app/docs/workflows
  */
