@@ -35,8 +35,6 @@ export function AgentProductCard({ invocation }: AgentProductCardProps) {
     );
   }
 
-  // TODO: `product` is undefined at runtime: getProductDetails now returns a flat object, so
-  // `product.images` below throws. See the TODO on getProductDetails in lib/tools.ts.
   const { product, stock } = output;
   const image = product.images[0];
   const stockLabel = !stock

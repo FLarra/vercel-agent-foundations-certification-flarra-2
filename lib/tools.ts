@@ -1,6 +1,7 @@
 import { tool } from "ai";
 import { z } from "zod";
 import { ApiRequestError, createReturn, getBackOfficeReturns, getBackOfficeSales, getBackOfficeStock, getBackOfficeSupportTickets, getCategories, getOrder, getProductById, getProductStock, getProducts, preauthorizeRefund, notifyReturnInProcess } from "@/lib/api";
+import { formatPrice } from "@/lib/format";
 import { start } from "workflow/api";
 import { returnFlow } from "./workflows/return-flow";
 import { createOrGetSandbox, SANDBOX_NAME } from "@/lib/sandbox";
@@ -92,12 +93,6 @@ export const returnOrder = tool({
   },
 });
 
-// TODO: this output shape broke the shopper chat's product card. Since a930b28 it returns a flat
-// object with `price` in cents, but `components/agent-product-card.tsx` still destructures
-// `{ product, stock }` and renders `product.price` as a formatted string. Either restore the
-// `{ product: { ..., price: formatPrice(...) }, stock: { available, inStock, lowStock } | null }`
-// shape or update the card. Also restore `getProductStock(productId).catch(() => null)`: a stock
-// error now fails the whole lookup, while the shopper instructions still say "If stock comes back null".
 export const getProductDetails = tool({
   description: `Fetch the full details for a single product by its ID or slug, including every image, the full description, price, tags, and live stock levels. Use this when the user asks about a specific item (e.g. "tell me more about the black hoodie") — prefer it over searchProducts once you know which product they mean, since searchProducts only returns a summary.`,
   inputSchema: z.object({
@@ -112,22 +107,28 @@ export const getProductDetails = tool({
     try {
       const [product, stock] = await Promise.all([
         getProductById(productId),
-        getProductStock(productId),
+        // Stock is a nice-to-have; don't fail the whole lookup if it errors.
+        getProductStock(productId).catch(() => null),
       ]);
       return {
-        id: product.id,
-        name: product.name,
-        slug: product.slug,
-        description: product.description,
-        price: product.price,
-        currency: product.currency,
-        category: product.category,
-        images: product.images,
-        tags: product.tags,
-        featured: product.featured,
-        stock: stock.stock,
-        inStock: stock.inStock,
-        lowStock: stock.lowStock,
+        product: {
+          id: product.id,
+          name: product.name,
+          slug: product.slug,
+          description: product.description,
+          price: formatPrice(product.price, product.currency),
+          category: product.category,
+          images: product.images,
+          tags: product.tags,
+          featured: product.featured,
+        },
+        stock: stock
+          ? {
+              available: stock.stock,
+              inStock: stock.inStock,
+              lowStock: stock.lowStock,
+            }
+          : null,
       };
     } catch (err) {
       const message =
